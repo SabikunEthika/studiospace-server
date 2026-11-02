@@ -74,6 +74,80 @@ app.get("/api/studios/:id", async (req, res) => {
 app.get("/api/studios/:id/reviews", async (req, res) => {
   res.send(await reviews.find({ studioId: req.params.id }).sort({ createdAt: -1 }).toArray());
 });
+
+const pickStudio = (b) => ({
+  title: b.title,
+  category: b.category,
+  hourlyRate: Number(b.hourlyRate),
+  securityDeposit: Number(b.securityDeposit) || 0,
+  capacity: Number(b.capacity) || 1,
+  location: b.location,
+  image: b.image,
+  gallery: Array.isArray(b.gallery) ? b.gallery : [],
+  amenities: Array.isArray(b.amenities) ? b.amenities : [],
+  overview: b.overview || "",
+});
+
+app.post("/api/studios", verifyToken, async (req, res) => {
+  const b = req.body;
+  if (!b.title || !b.category || !b.hourlyRate || !b.location || !b.image)
+    return res.status(400).send({ message: "Please fill all required fields" });
+  const doc = {
+    ...pickStudio(b),
+    ownerEmail: req.user.email,
+    ownerName: req.user.name,
+    ownerPhoto: b.ownerPhoto || "",
+    rating: 0,
+    reviewCount: 0,
+    createdAt: new Date(),
+  };
+  const result = await studios.insertOne(doc);
+  res.status(201).send(result);
+});
+
+app.put("/api/studios/:id", verifyToken, async (req, res) => {
+  const _id = toId(req.params.id);
+  if (!_id) return res.status(400).send({ message: "Invalid studio id" });
+  const existing = await studios.findOne({ _id });
+  if (!existing) return res.status(404).send({ message: "Studio not found" });
+  if (existing.ownerEmail !== req.user.email)
+    return res.status(403).send({ message: "You can only edit your own studios" });
+  await studios.updateOne({ _id }, { $set: { ...pickStudio(req.body), updatedAt: new Date() } });
+  res.send({ message: "Studio updated" });
+});
+
+app.delete("/api/studios/:id", verifyToken, async (req, res) => {
+  const _id = toId(req.params.id);
+  if (!_id) return res.status(400).send({ message: "Invalid studio id" });
+  const existing = await studios.findOne({ _id });
+  if (!existing) return res.status(404).send({ message: "Studio not found" });
+  if (existing.ownerEmail !== req.user.email)
+    return res.status(403).send({ message: "You can only delete your own studios" });
+  await studios.deleteOne({ _id });
+  res.send({ message: "Studio deleted" });
+});
+
+app.post("/api/studios/:id/reviews", verifyToken, async (req, res) => {
+  const _id = toId(req.params.id);
+  const rating = Number(req.body.rating);
+  const comment = (req.body.comment || "").trim();
+  if (!_id || !(rating >= 1 && rating <= 5) || !comment)
+    return res.status(400).send({ message: "Provide a rating (1-5) and a comment" });
+  const studio = await studios.findOne({ _id });
+  if (!studio) return res.status(404).send({ message: "Studio not found" });
+  if (studio.ownerEmail === req.user.email)
+    return res.status(403).send({ message: "You cannot review your own studio" });
+  await reviews.insertOne({
+    studioId: req.params.id, userEmail: req.user.email, userName: req.user.name,
+    rating, comment, createdAt: new Date(),
+  });
+  const agg = await reviews.aggregate([
+    { $match: { studioId: req.params.id } },
+    { $group: { _id: null, avg: { $avg: "$rating" }, count: { $sum: 1 } } },
+  ]).toArray();
+  await studios.updateOne({ _id }, { $set: { rating: Number(agg[0].avg.toFixed(1)), reviewCount: agg[0].count } });
+  res.status(201).send({ message: "Review added" });
+});
 // ===== BOOKING ROUTES (commits 6-7) =====
 // ===== WISHLIST ROUTES (commit 8) =====
 
