@@ -149,6 +149,47 @@ app.post("/api/studios/:id/reviews", verifyToken, async (req, res) => {
   res.status(201).send({ message: "Review added" });
 });
 // ===== BOOKING ROUTES (commits 6-7) =====
+app.post("/api/bookings", verifyToken, async (req, res) => {
+  const { studioId, date, startTime, endTime, notes } = req.body;
+  const _id = toId(studioId);
+  if (!_id || !date || !startTime || !endTime)
+    return res.status(400).send({ message: "Date, start time and end time are required" });
+  if (toMin(endTime) <= toMin(startTime))
+    return res.status(400).send({ message: "End time must be after start time" });
+  if (date < new Date().toISOString().slice(0, 10))
+    return res.status(400).send({ message: "You cannot book a past date" });
+
+  const studio = await studios.findOne({ _id });
+  if (!studio) return res.status(404).send({ message: "Studio not found" });
+  if (studio.ownerEmail === req.user.email)
+    return res.status(400).send({ message: "You cannot book your own studio" });
+
+  // overlap: existing.start < new.end AND existing.end > new.start ("HH:MM" strings compare correctly)
+  const clash = await bookings.findOne({
+    studioId, date, status: "Confirmed",
+    startTime: { $lt: endTime }, endTime: { $gt: startTime },
+  });
+  if (clash)
+    return res.status(409).send({
+      message: `This studio is already booked from ${clash.startTime} to ${clash.endTime} on ${date}. Please choose another slot.`,
+    });
+
+  const hours = (toMin(endTime) - toMin(startTime)) / 60;
+  const doc = {
+    studioId, studioTitle: studio.title, studioImage: studio.image,
+    ownerEmail: studio.ownerEmail,
+    userEmail: req.user.email, userName: req.user.name,
+    date, startTime, endTime, hours,
+    hourlyRate: studio.hourlyRate,
+    totalPrice: hours * studio.hourlyRate,
+    securityDeposit: studio.securityDeposit || 0,
+    notes: notes || "",
+    status: "Pending",
+    createdAt: new Date(),
+  };
+  const result = await bookings.insertOne(doc);
+  res.status(201).send(result);
+});
 // ===== WISHLIST ROUTES (commit 8) =====
 
 // ===== ERROR HANDLER & START =====
