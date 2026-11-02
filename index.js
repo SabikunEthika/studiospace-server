@@ -12,18 +12,41 @@ app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:3000", creden
 app.use(express.json());
 app.use(cookieParser());
 
-const client = new MongoClient(process.env.MONGODB_URI);
-const db = client.db("studiospace");
-const studios = db.collection("studios");
-const bookings = db.collection("bookings");
-const reviews = db.collection("reviews");
-const wishlist = db.collection("wishlist");
+const mongoUri = process.env.MONGODB_URI;
+const client = mongoUri
+  ? new MongoClient(mongoUri, { serverSelectionTimeoutMS: 10_000 })
+  : null;
+const db = client?.db("studiospace");
+const studios = db?.collection("studios");
+const bookings = db?.collection("bookings");
+const reviews = db?.collection("reviews");
+const wishlist = db?.collection("wishlist");
+let databaseReady = false;
 
 const toId = (id) => (ObjectId.isValid(id) ? new ObjectId(id) : null);
 const toMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 app.get("/", (req, res) => res.send("StudioSpace API is running"));
+
+// Render can use this endpoint to confirm that the HTTP server is alive.
+app.get("/health", (req, res) => {
+  res.status(200).send({ status: "ok", database: databaseReady ? "connected" : "disconnected" });
+});
+
+// Use this endpoint when a caller requires a working database connection.
+app.get("/ready", (req, res) => {
+  res.status(databaseReady ? 200 : 503).send({ database: databaseReady ? "connected" : "disconnected" });
+});
+
+const requireDatabase = (req, res, next) => {
+  if (!databaseReady) {
+    return res.status(503).send({ message: "Database is temporarily unavailable. Please try again shortly." });
+  }
+  next();
+};
+
+app.use("/api", requireDatabase);
 
 // ===== AUTH MIDDLEWARE (commit 3) =====
 const verifyToken = (req, res, next) => {
@@ -252,10 +275,47 @@ app.post("/api/wishlist/:studioId", verifyToken, async (req, res) => {
 
 // ===== ERROR HANDLER & START =====
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error("Unhandled request error", {
+    method: req.method,
+    path: req.originalUrl,
+    message: err.message,
+    stack: process.env.NODE_ENV === "production" ? undefined : err.stack,
+  });
   res.status(500).send({ message: "Internal server error" });
 });
 
-client.connect()
-  .then(() => app.listen(port, () => console.log(`Server running on port ${port}`)))
-  .catch(console.error);
+const server = app.listen(port, () => console.log(`HTTP server listening on port ${port}`));
+
+async function connectToDatabase() {
+  if (!client) {
+    console.error("Database configuration error: MONGODB_URI is not set");
+    return;
+  }
+
+  try {
+    await client.connect();
+    databaseReady = true;
+    console.log("MongoDB connected");
+  } catch (error) {
+    console.error("MongoDB connection failed", {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+    });
+    console.log("Retrying MongoDB connection in 30 seconds");
+    setTimeout(connectToDatabase, 30_000).unref();
+  }
+}
+
+connectToDatabase();
+
+async function shutdown(signal) {
+  console.log(`${signal} received: shutting down`);
+  server.close(async () => {
+    await client?.close();
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
