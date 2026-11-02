@@ -26,6 +26,15 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 app.get("/", (req, res) => res.send("StudioSpace API is running"));
 
 // ===== AUTH MIDDLEWARE (commit 3) =====
+const verifyToken = (req, res, next) => {
+  const token = req.cookies?.token;
+  if (!token) return res.status(401).send({ message: "Unauthorized: please log in" });
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).send({ message: "Unauthorized: invalid or expired token" });
+    req.user = decoded; // { email, name }
+    next();
+  });
+};
 // ===== STUDIO ROUTES (commits 4-5) =====
 // ===== BOOKING ROUTES (commits 6-7) =====
 // ===== WISHLIST ROUTES (commit 8) =====
