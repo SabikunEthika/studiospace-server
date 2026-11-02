@@ -190,6 +190,46 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
   const result = await bookings.insertOne(doc);
   res.status(201).send(result);
 });
+
+app.get("/api/bookings/my", verifyToken, async (req, res) => {
+  res.send(await bookings.find({ userEmail: req.user.email }).sort({ createdAt: -1 }).toArray());
+});
+
+app.get("/api/bookings/host", verifyToken, async (req, res) => {
+  res.send(await bookings.find({ ownerEmail: req.user.email }).sort({ createdAt: -1 }).toArray());
+});
+
+app.patch("/api/bookings/:id/cancel", verifyToken, async (req, res) => {
+  const _id = toId(req.params.id);
+  const booking = _id && (await bookings.findOne({ _id }));
+  if (!booking) return res.status(404).send({ message: "Booking not found" });
+  if (booking.userEmail !== req.user.email) return res.status(403).send({ message: "Forbidden" });
+  if (booking.status !== "Pending")
+    return res.status(400).send({ message: "Only pending bookings can be cancelled" });
+  await bookings.updateOne({ _id }, { $set: { status: "Cancelled" } });
+  res.send({ message: "Booking cancelled" });
+});
+
+// host changes status
+app.patch("/api/bookings/:id/status", verifyToken, async (req, res) => {
+  const { status } = req.body;
+  if (!["Confirmed", "Completed", "Cancelled"].includes(status))
+    return res.status(400).send({ message: "Invalid status" });
+  const _id = toId(req.params.id);
+  const booking = _id && (await bookings.findOne({ _id }));
+  if (!booking) return res.status(404).send({ message: "Booking not found" });
+  if (booking.ownerEmail !== req.user.email) return res.status(403).send({ message: "Forbidden" });
+  if (status === "Confirmed") {
+    const clash = await bookings.findOne({
+      _id: { $ne: _id }, studioId: booking.studioId, date: booking.date, status: "Confirmed",
+      startTime: { $lt: booking.endTime }, endTime: { $gt: booking.startTime },
+    });
+    if (clash)
+      return res.status(409).send({ message: `Conflicts with a confirmed booking (${clash.startTime}-${clash.endTime})` });
+  }
+  await bookings.updateOne({ _id }, { $set: { status } });
+  res.send({ message: `Booking ${status.toLowerCase()}` });
+});
 // ===== WISHLIST ROUTES (commit 8) =====
 
 // ===== ERROR HANDLER & START =====
