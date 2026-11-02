@@ -36,6 +36,44 @@ const verifyToken = (req, res, next) => {
   });
 };
 // ===== STUDIO ROUTES (commits 4-5) =====
+app.get("/api/studios/featured", async (req, res) => {
+  const data = await studios.find().sort({ rating: -1, createdAt: -1 }).limit(6).toArray();
+  res.send(data);
+});
+
+app.get("/api/studios/mine", verifyToken, async (req, res) => {
+  const data = await studios.find({ ownerEmail: req.user.email }).sort({ createdAt: -1 }).toArray();
+  res.send(data);
+});
+
+app.get("/api/studios", async (req, res) => {
+  const { search, category, sort } = req.query;
+  const query = {};
+  if (category) query.category = category;
+  if (search) {
+    const rx = { $regex: escapeRegex(search), $options: "i" };
+    query.$or = [{ title: rx }, { location: rx }];
+  }
+  const sorts = {
+    price_asc: { hourlyRate: 1 },
+    price_desc: { hourlyRate: -1 },
+    rating: { rating: -1 },
+    newest: { createdAt: -1 },
+  };
+  res.send(await studios.find(query).sort(sorts[sort] || { createdAt: -1 }).toArray());
+});
+
+app.get("/api/studios/:id", async (req, res) => {
+  const _id = toId(req.params.id);
+  if (!_id) return res.status(400).send({ message: "Invalid studio id" });
+  const studio = await studios.findOne({ _id });
+  if (!studio) return res.status(404).send({ message: "Studio not found" });
+  res.send(studio);
+});
+
+app.get("/api/studios/:id/reviews", async (req, res) => {
+  res.send(await reviews.find({ studioId: req.params.id }).sort({ createdAt: -1 }).toArray());
+});
 // ===== BOOKING ROUTES (commits 6-7) =====
 // ===== WISHLIST ROUTES (commit 8) =====
 
