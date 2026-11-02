@@ -231,6 +231,24 @@ app.patch("/api/bookings/:id/status", verifyToken, async (req, res) => {
   res.send({ message: `Booking ${status.toLowerCase()}` });
 });
 // ===== WISHLIST ROUTES (commit 8) =====
+app.get("/api/wishlist", verifyToken, async (req, res) => {
+  const items = await wishlist.find({ userEmail: req.user.email }).toArray();
+  res.send(items.map((i) => i.studioId));
+});
+
+app.get("/api/wishlist/studios", verifyToken, async (req, res) => {
+  const items = await wishlist.find({ userEmail: req.user.email }).toArray();
+  const ids = items.map((i) => toId(i.studioId)).filter(Boolean);
+  res.send(await studios.find({ _id: { $in: ids } }).toArray());
+});
+
+app.post("/api/wishlist/:studioId", verifyToken, async (req, res) => {
+  const filter = { userEmail: req.user.email, studioId: req.params.studioId };
+  const exists = await wishlist.findOne(filter);
+  if (exists) { await wishlist.deleteOne(filter); return res.send({ saved: false }); }
+  await wishlist.insertOne({ ...filter, createdAt: new Date() });
+  res.send({ saved: true });
+});
 
 // ===== ERROR HANDLER & START =====
 app.use((err, req, res, next) => {
